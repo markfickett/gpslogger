@@ -24,8 +24,6 @@ void setup()
   Serial.begin(115200);
   nss.begin(57600);
 
-  nss.println("$PMTK314,0,5,0,5,0,0,0,0,0,0,0,0,0,0,0,0,0*28");
-
   Serial.print("Testing TinyGPS library v. ");
   Serial.println(TinyGPS::library_version());
   Serial.println("by Mikal Hart");
