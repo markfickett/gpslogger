@@ -1,7 +1,7 @@
 // test_with_gps_device example from TinyGPS
 // with modifications specified by https://www.sparkfun.com/tutorials/176
 #include <SoftwareSerial.h>
-
+#include <SD.h>
 #include <TinyGPS.h>
 
 /* This sample code demonstrates the normal use of a TinyGPS object.
@@ -12,58 +12,88 @@
 TinyGPS gps;
 SoftwareSerial nss(3 /* rx: pin on which to receive serial data */, 4 /* tx */);
 
-static void gpsdump(TinyGPS &gps);
-static bool feedgps();
-static void print_float(float val, float invalid, int len, int prec);
-static void print_int(unsigned long val, unsigned long invalid, int len);
-static void print_date(TinyGPS &gps);
-static void print_str(const char *str, int len);
+Sd2Card card;
+SdVolume volume;
+#define PIN_SD_CHIP_SELECT 10
+#define PIN_SPI_CHIP_SELECT_REQUIRED 10
 
-void setup()
-{
+void setup() {
   Serial.begin(115200);
+
+  setUpSd();
+  setUpGps();
+}
+
+void setUpSd() {
+  if (PIN_SD_CHIP_SELECT != PIN_SPI_CHIP_SELECT_REQUIRED) {
+    pinMode(PIN_SPI_CHIP_SELECT_REQUIRED, OUTPUT);
+  }
+
+  if (!card.init(SPI_QUARTER_SPEED, PIN_SD_CHIP_SELECT)) {
+    Serial.println(F("SD card initialization failed. Check card/wiring."));
+    return;
+  }
+
+  if (!volume.init(card)) {
+    Serial.println(F("Could not find FAT16/32 partition."));
+    return;
+  }
+  Serial.print(F("Found FAT"));
+  Serial.print(volume.fatType(), DEC);
+  Serial.print(F(" volume, size is "));
+  Serial.print(
+      (volume.blocksPerCluster() * volume.clusterCount() * 512)
+      / (1024 * 1024));
+  Serial.println(F(" Mbytes."));
+}
+
+void setUpGps() {
   nss.begin(57600);
 
-  Serial.print("Testing TinyGPS library v. ");
+  Serial.print(F("Testing TinyGPS library v. "));
   Serial.println(TinyGPS::library_version());
-  Serial.println("by Mikal Hart");
+  Serial.println(F("by Mikal Hart"));
   Serial.println();
-  Serial.print("Sizeof(gpsobject) = ");
+  Serial.print(F("Sizeof(gpsobject) = "));
   Serial.println(sizeof(TinyGPS));
   Serial.println();
-  Serial.println(
+  Serial.println(F(
       "Sats HDOP Latitude Longitude Fix  Date       Time       Date "
       "Alt     Course Speed Card  Distance Course Card  "
-      "Chars Sentences Checksum");
-  Serial.println(
+      "Chars Sentences Checksum"));
+  Serial.println(F(
       "          (deg)    (deg)     Age                        Age  "
       "(m)     --- from GPS ----  ---- to London  ----  "
-      "RX    RX        Fail");
-  Serial.println(
+      "RX    RX        Fail"));
+  Serial.println(F(
       "-------------------------------------------------------------"
       "-------------------------------------------------"
-      "------------------------");
+      "------------------------"));
 }
 
 void loop()
 {
-  bool newdata = false;
   unsigned long start = millis();
 
   // Every second we print an update.
   while (millis() - start < 1000)
   {
-    if (feedgps())
-      newdata = true;
+    feedgps();
   }
 
   gpsdump(gps);
+
+  sddump(gps);
+}
+
+static void sddump(TinyGPS &gps) {
+  //SdFile root;
 }
 
 static void gpsdump(TinyGPS &gps)
 {
   float flat, flon;
-  unsigned long age, date, time, chars = 0;
+  unsigned long age, time, chars = 0;
   unsigned short sentences = 0, failed = 0;
   static const float LONDON_LAT = 51.508131, LONDON_LON = -0.128002;
 
@@ -153,7 +183,7 @@ static void print_date(TinyGPS &gps)
   gps.crack_datetime(
       &year, &month, &day, &hour, &minute, &second, &hundredths, &age);
   if (age == TinyGPS::GPS_INVALID_AGE)
-    Serial.print("*******    *******    ");
+    Serial.print(F("*******    *******    "));
   else
   {
     char sz[32];
