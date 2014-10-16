@@ -1,27 +1,63 @@
-// test_with_gps_device example from TinyGPS
-// with modifications specified by https://www.sparkfun.com/tutorials/176
+/**
+ * Fetch GPS data over serial and log it to an SD card.
+ *
+ * This uses TinyGPS to decode NMEA (RMS and GGA) sentences from a LS20031 GPS
+ * module, and then uses the the SD library to write GPX formatted data to a
+ * micro SD card.
+ *
+ * NMEA explanations: http://www.gpsinformation.org/dale/nmea.htm#position
+ * GPS getting-started guide: https://www.sparkfun.com/tutorials/176
+ */
+
 #include <SoftwareSerial.h>
 #include <SD.h>
 #include <TinyGPS.h>
 
-/* This sample code demonstrates the normal use of a TinyGPS object.
-   It requires the use of SoftwareSerial, and assumes that you have a
-   57600-baud serial GPS device hooked up on pins 3(rx) and 4(tx).
-*/
+#define PIN_RX_FROM_GPS 3
+#define PIN_TX_TO_GPS 4
+#define PIN_SD_CHIP_SELECT 10
+#define PIN_SPI_CHIP_SELECT_REQUIRED 10
+// The SD library requires, for SPI communication:
+// 11 MOSI (master/Arduino output, slave/SD input)
+// 12 MISO (master input, slave output)
+// 13 CLK (clock)
 
 TinyGPS gps;
-SoftwareSerial nss(3 /* rx: pin on which to receive serial data */, 4 /* tx */);
+SoftwareSerial nss(PIN_RX_FROM_GPS, PIN_TX_TO_GPS);
 
 Sd2Card card;
 SdVolume volume;
-#define PIN_SD_CHIP_SELECT 10
-#define PIN_SPI_CHIP_SELECT_REQUIRED 10
+
+bool gpxFileStarted;
+char gpxFileName[32];
+
+struct GpsSample {
+  float lat_deg_millionths,
+        lon_deg_millionths;
+  float altitude_cm;
+
+  int satellites;
+  int hdop_hundredths;
+  unsigned long fix_age_ms;
+
+  float speed_mps;
+  float course_deg_hundredths;
+
+  unsigned long datetime_fix_age_ms;
+  int year;
+  byte month,
+       day,
+       hour,
+       minute,
+       second,
+       hundredths;
+};
 
 void setup() {
   Serial.begin(115200);
-
   setUpSd();
   setUpGps();
+  gpxFileStarted = false;
 }
 
 void setUpSd() {
@@ -49,166 +85,89 @@ void setUpSd() {
 
 void setUpGps() {
   nss.begin(57600);
-
-  Serial.print(F("Testing TinyGPS library v. "));
-  Serial.println(TinyGPS::library_version());
-  Serial.println(F("by Mikal Hart"));
-  Serial.println();
-  Serial.print(F("Sizeof(gpsobject) = "));
-  Serial.println(sizeof(TinyGPS));
-  Serial.println();
-  Serial.println(F(
-      "Sats HDOP Latitude Longitude Fix  Date       Time       Date "
-      "Alt     Course Speed Card  Distance Course Card  "
-      "Chars Sentences Checksum"));
-  Serial.println(F(
-      "          (deg)    (deg)     Age                        Age  "
-      "(m)     --- from GPS ----  ---- to London  ----  "
-      "RX    RX        Fail"));
-  Serial.println(F(
-      "-------------------------------------------------------------"
-      "-------------------------------------------------"
-      "------------------------"));
 }
 
-void loop()
-{
+void loop() {
   unsigned long start = millis();
-
   // Every second we print an update.
-  while (millis() - start < 1000)
-  {
-    feedgps();
+  while (millis() - start < 1000) {
+    readFromGpsSerial();
   }
-
-  gpsdump(gps);
-
-  sddump(gps);
-}
-
-static void sddump(TinyGPS &gps) {
-  //SdFile root;
-}
-
-static void gpsdump(TinyGPS &gps)
-{
-  float flat, flon;
-  unsigned long age, time, chars = 0;
-  unsigned short sentences = 0, failed = 0;
-  static const float LONDON_LAT = 51.508131, LONDON_LON = -0.128002;
-
-  print_int(gps.satellites(), TinyGPS::GPS_INVALID_SATELLITES, 5);
-  print_int(gps.hdop(), TinyGPS::GPS_INVALID_HDOP, 5);
-  gps.f_get_position(&flat, &flon, &age);
-  print_float(flat, TinyGPS::GPS_INVALID_F_ANGLE, 9, 5);
-  print_float(flon, TinyGPS::GPS_INVALID_F_ANGLE, 10, 5);
-  print_int(age, TinyGPS::GPS_INVALID_AGE, 5);
-
-  print_date(gps);
-
-  print_float(gps.f_altitude(), TinyGPS::GPS_INVALID_F_ALTITUDE, 8, 2);
-  print_float(gps.f_course(), TinyGPS::GPS_INVALID_F_ANGLE, 7, 2);
-  print_float(gps.f_speed_kmph(), TinyGPS::GPS_INVALID_F_SPEED, 6, 2);
-  print_str(
-      gps.f_course() == TinyGPS::GPS_INVALID_F_ANGLE ?
-      "*** " : TinyGPS::cardinal(gps.f_course()), 6);
-  print_int(
-      flat == TinyGPS::GPS_INVALID_F_ANGLE ?
-      0UL : (unsigned long)TinyGPS::distance_between(
-          flat, flon, LONDON_LAT, LONDON_LON) / 1000,
-      0xFFFFFFFF, 9);
-  print_float(
-      flat == TinyGPS::GPS_INVALID_F_ANGLE ?
-      0.0 : TinyGPS::course_to(flat, flon, LONDON_LAT, LONDON_LON),
-      TinyGPS::GPS_INVALID_F_ANGLE, 7, 2);
-  print_str(
-      flat == TinyGPS::GPS_INVALID_F_ANGLE ?
-      "*** " : TinyGPS::cardinal(TinyGPS::course_to(
-          flat, flon, LONDON_LAT, LONDON_LON)),
-      6);
-
-  gps.stats(&chars, &sentences, &failed);
-  print_int(chars, 0xFFFFFFFF, 6);
-  print_int(sentences, 0xFFFFFFFF, 10);
-  print_int(failed, 0xFFFFFFFF, 9);
-  Serial.println();
-}
-
-static void print_int(unsigned long val, unsigned long invalid, int len)
-{
-  char sz[32];
-  if (val == invalid)
-    strcpy(sz, "*******");
-  else
-    sprintf(sz, "%ld", val);
-  sz[len] = 0;
-  for (int i=strlen(sz); i<len; ++i)
-    sz[i] = ' ';
-  if (len > 0)
-    sz[len-1] = ' ';
-  Serial.print(sz);
-  feedgps();
-}
-
-static void print_float(float val, float invalid, int len, int prec)
-{
-  char sz[32];
-  if (val == invalid)
-  {
-    strcpy(sz, "*******");
-    sz[len] = 0;
-        if (len > 0)
-          sz[len-1] = ' ';
-    for (int i=7; i<len; ++i)
-        sz[i] = ' ';
-    Serial.print(sz);
+  struct GpsSample sample = getGpsSample(gps);
+  if (sample.fix_age_ms == TinyGPS::GPS_INVALID_AGE) {
+    Serial.println(F("Waiting for location fix."));
+  } else if (sample.fix_age_ms == TinyGPS::GPS_INVALID_AGE) {
+    Serial.println(F("Waiting for datetime fix."));
+  } else {
+    if (!gpxFileStarted) {
+      sprintf(
+          gpxFileName,
+          "%02d%02d%02d-%02d%02d%02d.gpx",
+          sample.year,
+          sample.month,
+          sample.day,
+          sample.hour,
+          sample.minute,
+          sample.second);
+      Serial.print(F("Starting log file "));
+      Serial.println(gpxFileName);
+      startGpxFileOnSd(gpxFileName, sample);
+      gpxFileStarted = true;
+    }
+    writeGpxSampleToSd(gpxFileName, sample);
   }
-  else
-  {
-    Serial.print(val, prec);
-    int vi = abs((int)val);
-    int flen = prec + (val < 0.0 ? 2 : 1);
-    flen += vi >= 1000 ? 4 : vi >= 100 ? 3 : vi >= 10 ? 2 : 1;
-    for (int i=flen; i<len; ++i)
-      Serial.print(" ");
-  }
-  feedgps();
 }
 
-static void print_date(TinyGPS &gps)
-{
-  int year;
-  byte month, day, hour, minute, second, hundredths;
-  unsigned long age;
+static bool readFromGpsSerial() {
+  while (nss.available()) {
+    gps.encode(nss.read());
+  }
+}
+
+static void startGpxFileOnSd(
+    const char* gpxFileName,
+    const struct GpsSample &sample) {
+}
+
+static void writeGpxSampleToSd(
+    const char* gpxFileName,
+    const struct GpsSample &sample) {
+  /*
+  SdFile root;
+  TinyGPS::GPS_INVALID_SATELLITES
+  TinyGPS::GPS_INVALID_HDOP
+  TinyGPS::GPS_INVALID_F_ANGLE
+  TinyGPS::GPS_INVALID_F_ANGLE
+  TinyGPS::GPS_INVALID_F_ALTITUDE
+  TinyGPS::GPS_INVALID_F_SPEED
+  TinyGPS::GPS_INVALID_F_ANGLE
+  */
+}
+
+static struct GpsSample getGpsSample(TinyGPS &gps) {
+  struct GpsSample sample;
+
+  gps.f_get_position(
+      &sample.lat_deg_millionths,
+      &sample.lon_deg_millionths,
+      &sample.fix_age_ms);
+  sample.altitude_cm = gps.f_altitude();
+
+  sample.satellites = gps.satellites();
+  sample.hdop_hundredths = gps.hdop();
+
+  sample.course_deg_hundredths = gps.f_course();
+  sample.speed_mps = gps.f_speed_mps();
+
   gps.crack_datetime(
-      &year, &month, &day, &hour, &minute, &second, &hundredths, &age);
-  if (age == TinyGPS::GPS_INVALID_AGE)
-    Serial.print(F("*******    *******    "));
-  else
-  {
-    char sz[32];
-    sprintf(sz, "%02d/%02d/%02d %02d:%02d:%02d   ",
-        month, day, year, hour, minute, second);
-    Serial.print(sz);
-  }
-  print_int(age, TinyGPS::GPS_INVALID_AGE, 5);
-  feedgps();
-}
+      &sample.year,
+      &sample.month,
+      &sample.day,
+      &sample.hour,
+      &sample.minute,
+      &sample.second,
+      &sample.hundredths,
+      &sample.datetime_fix_age_ms);
 
-static void print_str(const char *str, int len)
-{
-  int slen = strlen(str);
-  for (int i=0; i<len; ++i)
-    Serial.print(i<slen ? str[i] : ' ');
-  feedgps();
-}
-
-static bool feedgps()
-{
-  while (nss.available())
-  {
-    if (gps.encode(nss.read()))
-      return true;
-  }
-  return false;
+  return sample;
 }
