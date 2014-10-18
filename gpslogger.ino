@@ -32,6 +32,8 @@
 // Seek to fileSize + this position before writing track points.
 #define SEEK_TRKPT_BACKWARDS -24
 #define GPX_EPILOGUE "\t</trkseg></trk>\n</gpx>\n"
+#define LATLON_PREC 6
+#define ELE_PREC 2
 
 TinyGPS gps;
 SoftwareSerial nss(PIN_RX_FROM_GPS, PIN_TX_TO_GPS);
@@ -44,7 +46,7 @@ char buf[32];
 struct GpsSample {
   float lat_deg,
         lon_deg;
-  float altitude_cm;
+  float altitude_m;
 
   int satellites;
   int hdop_hundredths;
@@ -164,19 +166,43 @@ static void startGpxFileOnSdNoSync() {
   gpxFile.print(F(GPX_EPILOGUE));
 }
 
+static void writeFloat(float v, SdFile &file, int precision) {
+  obufstream ob(buf, sizeof(buf));
+  ob << setprecision(precision) << v;
+  file.print(buf);
+}
+
 static void writeGpxSampleToSd() {
   gpxFile.seekSet(gpxFile.fileSize() + SEEK_TRKPT_BACKWARDS);
   gpxFile.print(F("\t\t<trkpt "));
 
   gpxFile.print(F("lat=\""));
-  gpxFile.print(sample.lat_deg);
+  writeFloat(sample.lat_deg, gpxFile, LATLON_PREC);
   gpxFile.print(F("\" lon=\""));
-  gpxFile.print(sample.lon_deg);
+  writeFloat(sample.lon_deg, gpxFile, LATLON_PREC);
   gpxFile.print(F("\">"));
 
-  /*
-  float altitude_cm;
+  gpxFile.print(F("<time>"));
+  sprintf(
+      buf,
+      "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ",
+      sample.year,
+      sample.month,
+      sample.day,
+      sample.hour,
+      sample.minute,
+      sample.second,
+      sample.hundredths);
+  gpxFile.print(buf);
+  gpxFile.print(F("</time>"));
 
+  if (sample.altitude_m != TinyGPS::GPS_INVALID_F_ALTITUDE) {
+    gpxFile.print(F("<ele>")); // meters
+    writeFloat(sample.altitude_m, gpxFile, ELE_PREC);
+    gpxFile.print(F("</ele>"));
+  }
+
+  /*
   int satellites;
   int hdop_hundredths;
   unsigned long fix_age_ms;
@@ -187,9 +213,6 @@ static void writeGpxSampleToSd() {
   SdFile root;
   TinyGPS::GPS_INVALID_SATELLITES
   TinyGPS::GPS_INVALID_HDOP
-  TinyGPS::GPS_INVALID_F_ANGLE
-  TinyGPS::GPS_INVALID_F_ANGLE
-  TinyGPS::GPS_INVALID_F_ALTITUDE
   TinyGPS::GPS_INVALID_F_SPEED
   TinyGPS::GPS_INVALID_F_ANGLE
   */
@@ -209,7 +232,7 @@ static void fillGpsSample(TinyGPS &gps) {
       &sample.lat_deg,
       &sample.lon_deg,
       &sample.fix_age_ms);
-  sample.altitude_cm = gps.f_altitude();
+  sample.altitude_m = gps.f_altitude();
 
   sample.satellites = gps.satellites();
   sample.hdop_hundredths = gps.hdop();
