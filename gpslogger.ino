@@ -7,11 +7,18 @@
  *
  * NMEA explanations: http://www.gpsinformation.org/dale/nmea.htm#position
  * GPS getting-started guide: https://www.sparkfun.com/tutorials/176
+ * GPX tags http://wiki.openstreetmap.org/wiki/GPX
+ *          http://www.topografix.com/gpx_manual.asp
+ * Similar project http://forum.arduino.cc/index.php?topic=199019.15
  */
 
 #include <SoftwareSerial.h>
-#include <SD.h>
+#include <SdFat.h>
 #include <TinyGPS.h>
+
+#define SAMPLE_INTERVAL_MS 1000
+
+#define PIN_STATUS_LED 13
 
 #define PIN_RX_FROM_GPS 3
 #define PIN_TX_TO_GPS 4
@@ -22,18 +29,21 @@
 // 12 MISO (master input, slave output)
 // 13 CLK (clock)
 
+// Seek to fileSize + this position before writing track points.
+#define SEEK_TRKPT_BACKWARDS -24
+#define GPX_EPILOGUE "\t</trkseg></trk>\n</gpx>\n"
+
 TinyGPS gps;
 SoftwareSerial nss(PIN_RX_FROM_GPS, PIN_TX_TO_GPS);
 
-Sd2Card card;
-SdVolume volume;
+SdFat sd;
+SdFile gpxFile;
 
-bool gpxFileStarted;
-char gpxFileName[32];
+char buf[32];
 
 struct GpsSample {
-  float lat_deg_millionths,
-        lon_deg_millionths;
+  float lat_deg,
+        lon_deg;
   float altitude_cm;
 
   int satellites;
@@ -52,12 +62,28 @@ struct GpsSample {
        second,
        hundredths;
 };
+struct GpsSample sample;
 
 void setup() {
+  pinMode(PIN_STATUS_LED, OUTPUT);
+  digitalWrite(PIN_STATUS_LED, HIGH);
   Serial.begin(115200);
   setUpSd();
   setUpGps();
-  gpxFileStarted = false;
+  digitalWrite(PIN_STATUS_LED, LOW);
+}
+
+void loop() {
+  readFromGpsUntilSampleTime();
+  fillGpsSample(gps);
+  writeGpxSampleToSd();
+
+  // TODO: Exit condition. Voltage drop from power being switched off?
+  if (false) {
+    gpxFile.close();
+    Serial.println(F("Exiting."));
+    exit(0);
+  }
 }
 
 void setUpSd() {
@@ -65,56 +91,33 @@ void setUpSd() {
     pinMode(PIN_SPI_CHIP_SELECT_REQUIRED, OUTPUT);
   }
 
-  if (!card.init(SPI_QUARTER_SPEED, PIN_SD_CHIP_SELECT)) {
-    Serial.println(F("SD card initialization failed. Check card/wiring."));
-    return;
+  if (!sd.begin(PIN_SD_CHIP_SELECT, SPI_QUARTER_SPEED)) {
+    sd.initErrorHalt();
   }
-
-  if (!volume.init(card)) {
-    Serial.println(F("Could not find FAT16/32 partition."));
-    return;
-  }
-  Serial.print(F("Found FAT"));
-  Serial.print(volume.fatType(), DEC);
-  Serial.print(F(" volume, size is "));
-  Serial.print(
-      (volume.blocksPerCluster() * volume.clusterCount() * 512)
-      / (1024 * 1024));
-  Serial.println(F(" Mbytes."));
 }
 
 void setUpGps() {
   nss.begin(57600);
+
+  while (true) {
+    readFromGpsUntilSampleTime();
+    fillGpsSample(gps);
+    if (sample.fix_age_ms == TinyGPS::GPS_INVALID_AGE) {
+      Serial.println(F("Waiting for location fix."));
+    } else if (sample.fix_age_ms == TinyGPS::GPS_INVALID_AGE) {
+      Serial.println(F("Waiting for datetime fix."));
+    } else {
+      startGpxFileOnSdNoSync();
+      break;
+    }
+  }
 }
 
-void loop() {
+static void readFromGpsUntilSampleTime() {
   unsigned long start = millis();
-  // Every second we print an update.
-  while (millis() - start < 1000) {
+  // Process a sample from the GPS every second.
+  while (millis() - start < SAMPLE_INTERVAL_MS) {
     readFromGpsSerial();
-  }
-  struct GpsSample sample = getGpsSample(gps);
-  if (sample.fix_age_ms == TinyGPS::GPS_INVALID_AGE) {
-    Serial.println(F("Waiting for location fix."));
-  } else if (sample.fix_age_ms == TinyGPS::GPS_INVALID_AGE) {
-    Serial.println(F("Waiting for datetime fix."));
-  } else {
-    if (!gpxFileStarted) {
-      sprintf(
-          gpxFileName,
-          "%02d%02d%02d-%02d%02d%02d.gpx",
-          sample.year,
-          sample.month,
-          sample.day,
-          sample.hour,
-          sample.minute,
-          sample.second);
-      Serial.print(F("Starting log file "));
-      Serial.println(gpxFileName);
-      startGpxFileOnSd(gpxFileName, sample);
-      gpxFileStarted = true;
-    }
-    writeGpxSampleToSd(gpxFileName, sample);
   }
 }
 
@@ -124,15 +127,63 @@ static bool readFromGpsSerial() {
   }
 }
 
-static void startGpxFileOnSd(
-    const char* gpxFileName,
-    const struct GpsSample &sample) {
+static void startGpxFileOnSdNoSync() {
+  sprintf(
+      buf,
+      "%02d%02d%02d",
+      sample.year,
+      sample.month,
+      sample.day);
+  if (!sd.exists(buf)) {
+    if (!sd.mkdir(buf)) {
+      sd.errorHalt("Creating log directory for today failed.");
+    }
+  }
+  sprintf(
+      buf,
+      "%02d%02d%02d/%02d%02d%02d.gpx",
+      sample.year,
+      sample.month,
+      sample.day,
+      sample.hour,
+      sample.minute,
+      sample.second);
+  Serial.print(F("Starting log file "));
+  Serial.println(buf);
+  if (sd.exists(buf)) {
+    Serial.println(F("warning: log file already exists, overwriting."));
+  }
+  if (!gpxFile.open(buf, O_CREAT | O_WRITE)) {
+    sd.errorHalt("Opening new log file failed.");
+  }
+
+  gpxFile.print(F(
+    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+    "<gpx version=\"1.0\">\n"
+    "\t<trk><trkseg>\n"));
+  gpxFile.print(F(GPX_EPILOGUE));
 }
 
-static void writeGpxSampleToSd(
-    const char* gpxFileName,
-    const struct GpsSample &sample) {
+static void writeGpxSampleToSd() {
+  gpxFile.seekSet(gpxFile.fileSize() + SEEK_TRKPT_BACKWARDS);
+  gpxFile.print(F("\t\t<trkpt "));
+
+  gpxFile.print(F("lat=\""));
+  gpxFile.print(sample.lat_deg);
+  gpxFile.print(F("\" lon=\""));
+  gpxFile.print(sample.lon_deg);
+  gpxFile.print(F("\">"));
+
   /*
+  float altitude_cm;
+
+  int satellites;
+  int hdop_hundredths;
+  unsigned long fix_age_ms;
+
+  float speed_mps;
+  float course_deg_hundredths;
+
   SdFile root;
   TinyGPS::GPS_INVALID_SATELLITES
   TinyGPS::GPS_INVALID_HDOP
@@ -142,14 +193,21 @@ static void writeGpxSampleToSd(
   TinyGPS::GPS_INVALID_F_SPEED
   TinyGPS::GPS_INVALID_F_ANGLE
   */
+  gpxFile.print(F("</trkpt>\n"));
+
+  gpxFile.print(F(GPX_EPILOGUE));
+
+  digitalWrite(PIN_STATUS_LED, HIGH);
+  if (!gpxFile.sync() || gpxFile.getWriteError()) {
+    Serial.println(F("SD sync/write error."));
+  }
+  digitalWrite(PIN_STATUS_LED, LOW);
 }
 
-static struct GpsSample getGpsSample(TinyGPS &gps) {
-  struct GpsSample sample;
-
+static void fillGpsSample(TinyGPS &gps) {
   gps.f_get_position(
-      &sample.lat_deg_millionths,
-      &sample.lon_deg_millionths,
+      &sample.lat_deg,
+      &sample.lon_deg,
       &sample.fix_age_ms);
   sample.altitude_cm = gps.f_altitude();
 
@@ -168,6 +226,4 @@ static struct GpsSample getGpsSample(TinyGPS &gps) {
       &sample.second,
       &sample.hundredths,
       &sample.datetime_fix_age_ms);
-
-  return sample;
 }
