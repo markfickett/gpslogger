@@ -33,7 +33,6 @@
 #define SEEK_TRKPT_BACKWARDS -24
 #define GPX_EPILOGUE "\t</trkseg></trk>\n</gpx>\n"
 #define LATLON_PREC 6
-#define ELE_PREC 2
 
 TinyGPS gps;
 SoftwareSerial nss(PIN_RX_FROM_GPS, PIN_TX_TO_GPS);
@@ -198,24 +197,35 @@ static void writeGpxSampleToSd() {
 
   if (sample.altitude_m != TinyGPS::GPS_INVALID_F_ALTITUDE) {
     gpxFile.print(F("<ele>")); // meters
-    writeFloat(sample.altitude_m, gpxFile, ELE_PREC);
+    writeFloat(sample.altitude_m, gpxFile, 2 /* centimeter precision */);
     gpxFile.print(F("</ele>"));
   }
 
-  /*
-  int satellites;
-  int hdop_hundredths;
-  unsigned long fix_age_ms;
+  if (sample.speed_mps != TinyGPS::GPS_INVALID_F_SPEED) {
+    gpxFile.print(F("<speed>"));
+    writeFloat(sample.speed_mps, gpxFile, 1);
+    gpxFile.print(F("</speed>"));
+  }
+  if (sample.course_deg_hundredths != TinyGPS::GPS_INVALID_F_ANGLE) {
+    gpxFile.print(F("<course>"));
+    writeFloat(sample.course_deg_hundredths / 100, gpxFile, 1);
+    gpxFile.print(F("</course>"));
+  }
 
-  float speed_mps;
-  float course_deg_hundredths;
+  if (sample.satellites != TinyGPS::GPS_INVALID_SATELLITES) {
+    gpxFile.print(F("<sat>"));
+    gpxFile.print(sample.satellites);
+    gpxFile.print(F("</sat>"));
+  }
+  if (sample.hdop_hundredths != TinyGPS::GPS_INVALID_HDOP) {
+    gpxFile.print(F("<hdop>"));
+    writeFloat(sample.hdop_hundredths / 100.0, gpxFile, 2);
+    gpxFile.print(F("</hdop>"));
+  }
+  gpxFile.print(F("<ageofdgpsdata>"));
+  writeFloat(sample.fix_age_ms / 1000.0, gpxFile, 3);
+  gpxFile.print(F("</ageofdgpsdata>"));
 
-  SdFile root;
-  TinyGPS::GPS_INVALID_SATELLITES
-  TinyGPS::GPS_INVALID_HDOP
-  TinyGPS::GPS_INVALID_F_SPEED
-  TinyGPS::GPS_INVALID_F_ANGLE
-  */
   gpxFile.print(F("</trkpt>\n"));
 
   gpxFile.print(F(GPX_EPILOGUE));
