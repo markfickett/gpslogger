@@ -77,7 +77,9 @@ void setup() {
 void loop() {
   readFromGpsUntilSampleTime();
   fillGpsSample(gps);
-  writeGpxSampleToSd();
+  if (sample.fix_age_ms <= SAMPLE_INTERVAL_MS) {
+    writeGpxSampleToSd();
+  }
 
   // TODO: Exit condition. Voltage drop from power being switched off?
   if (false) {
