@@ -52,7 +52,7 @@ struct GpsSample {
   unsigned long fix_age_ms;
 
   float speed_mps;
-  float course_deg_hundredths;
+  float course_deg;
 
   unsigned long datetime_fix_age_ms;
   int year;
@@ -208,9 +208,9 @@ static void writeGpxSampleToSd() {
     writeFloat(sample.speed_mps, gpxFile, 1);
     gpxFile.print(F("</speed>"));
   }
-  if (sample.course_deg_hundredths != TinyGPS::GPS_INVALID_F_ANGLE) {
+  if (sample.course_deg != TinyGPS::GPS_INVALID_F_ANGLE) {
     gpxFile.print(F("<course>"));
-    writeFloat(sample.course_deg_hundredths / 100, gpxFile, 1);
+    writeFloat(sample.course_deg, gpxFile, 1);
     gpxFile.print(F("</course>"));
   }
 
@@ -249,7 +249,7 @@ static void fillGpsSample(TinyGPS &gps) {
   sample.satellites = gps.satellites();
   sample.hdop_hundredths = gps.hdop();
 
-  sample.course_deg_hundredths = gps.f_course();
+  sample.course_deg = gps.f_course();
   sample.speed_mps = gps.f_speed_mps();
 
   gps.crack_datetime(
