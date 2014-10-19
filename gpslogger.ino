@@ -20,7 +20,7 @@
 
 #define PIN_STATUS_LED 13
 
-#define PIN_RX_FROM_GPS 3
+#define PIN_RX_FROM_GPS 2
 #define PIN_TX_TO_GPS 4
 #define PIN_SD_CHIP_SELECT 10
 #define PIN_SPI_CHIP_SELECT_REQUIRED 10
