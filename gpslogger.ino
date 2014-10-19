@@ -5,8 +5,18 @@
  * module, and then uses the the SD library to write GPX formatted data to a
  * micro SD card.
  *
- * NMEA explanations: http://www.gpsinformation.org/dale/nmea.htm#position
+ * Recommended configuration for the LS20031 GPS module:
+ *   // FULL COLD RESTART (clears any bad almanac data)
+ *   Serial.println("$PMTK104*37");
+ *   // GGA + RMC (all that is used by TinyGPS), 1Hz
+ *   Serial.println("$PMTK314,0,5,0,5,0,0,0,0,0,0,0,0,0,0,0,0,0*28");
+ *   // Reduce serial output rate 57600 => 14400 baud, since SoftwareSerial
+ *   // on an 8MHz Arduino Pro Mini can't keep up (though an Uno can).
+ *   Serial.println("$PMTK251,14400*29");
+ *
  * GPS getting-started guide: https://www.sparkfun.com/tutorials/176
+ * NMEA explanations: http://www.gpsinformation.org/dale/nmea.htm#position
+ * NMEA checksum calculator: http://www.hhhh.org/wiml/proj/nmeaxor.html
  * GPX tags http://wiki.openstreetmap.org/wiki/GPX
  *          http://www.topografix.com/gpx_manual.asp
  * Similar project http://forum.arduino.cc/index.php?topic=199019.15
@@ -100,7 +110,7 @@ void setUpSd() {
 }
 
 void setUpGps() {
-  nss.begin(57600);
+  nss.begin(14400);
 
   while (true) {
     readFromGpsUntilSampleTime();
