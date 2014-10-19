@@ -13,6 +13,9 @@
  *   // Reduce serial output rate 57600 => 14400 baud, since SoftwareSerial
  *   // on an 8MHz Arduino Pro Mini can't keep up (though an Uno can).
  *   Serial.println("$PMTK251,14400*29");
+ * Also edit SoftwareSerial.h to have a larger buffer (default is 64):
+ *   #define _SS_MAX_RX_BUFF 256
+ * On MacOS, it's in Contents/Resources/Java/libraries/SoftwareSerial/.
  *
  * GPS getting-started guide: https://www.sparkfun.com/tutorials/176
  * NMEA explanations: http://www.gpsinformation.org/dale/nmea.htm#position
