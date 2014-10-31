@@ -53,6 +53,7 @@ SoftwareSerial nss(PIN_RX_FROM_GPS, PIN_TX_TO_GPS);
 SdFat sd;
 SdFile gpxFile;
 
+// General-purpose text buffer used in formatting.
 char buf[32];
 
 struct GpsSample {
@@ -76,6 +77,7 @@ struct GpsSample {
        second,
        hundredths;
 };
+// The latest sample read from the GPS.
 struct GpsSample sample;
 
 void setup() {
