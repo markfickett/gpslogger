@@ -97,14 +97,16 @@ struct GpsSample {
 // The latest sample read from the GPS.
 struct GpsSample sample;
 
-// The previously sampled / recorded voltage.
+// The previously sampled / recorded voltages.
 float lastVoltage;
+float lastRecordedVoltage;
 byte lastRecordedVoltageMinute;
 
 void setup() {
   pinMode(PIN_STATUS_LED, OUTPUT);
   digitalWrite(PIN_STATUS_LED, HIGH);
   lastVoltage = 0;
+  lastRecordedVoltage = 0;
   lastRecordedVoltageMinute = 61;
   Serial.begin(115200);
   setUpSd();
@@ -120,21 +122,7 @@ void loop() {
     // TODO: Write whenever there is new data (trust GPS is set at 1Hz).
     writeGpxSampleToSd();
   }
-
-  if (!recordVoltageAndReportSafe()) {
-    gpxFile.close();
-    voltageFile.print(F("detected power-off"));
-    voltageFile.close();
-    Serial.print(F("Exiting, last voltage was "));
-    Serial.println(lastVoltage);
-    // TODO: Resume in case of a false alarm.
-    while(true) {
-      //digitalWrite(PIN_STATUS_LED, HIGH);
-      delay(50);
-      //digitalWrite(PIN_STATUS_LED, LOW);
-      delay(500);
-    }
-  }
+  recordVoltage();
 }
 
 void setUpSd() {
@@ -169,6 +157,7 @@ static void readFromGpsUntilSampleTime() {
   // Process a sample from the GPS every second.
   while (millis() - start < SAMPLE_INTERVAL_MS) {
     readFromGpsSerial();
+    getVoltageMaybeExit();
   }
 }
 
@@ -258,6 +247,7 @@ static void writeGpxSampleToSd() {
   gpxFile.print(F("\" lon=\""));
   writeFloat(sample.lon_deg, gpxFile, LATLON_PREC);
   gpxFile.print(F("\">"));
+  getVoltageMaybeExit();
 
   gpxFile.print(F("<time>"));
   writeFormattedSampleDatetime(gpxFile);
@@ -268,6 +258,7 @@ static void writeGpxSampleToSd() {
     writeFloat(sample.altitude_m, gpxFile, 2 /* centimeter precision */);
     gpxFile.print(F("</ele>"));
   }
+  getVoltageMaybeExit();
 
   if (sample.speed_mps != TinyGPS::GPS_INVALID_F_SPEED) {
     gpxFile.print(F("<speed>"));
@@ -279,6 +270,7 @@ static void writeGpxSampleToSd() {
     writeFloat(sample.course_deg, gpxFile, 1);
     gpxFile.print(F("</course>"));
   }
+  getVoltageMaybeExit();
 
   if (sample.satellites != TinyGPS::GPS_INVALID_SATELLITES) {
     gpxFile.print(F("<sat>"));
@@ -290,11 +282,13 @@ static void writeGpxSampleToSd() {
     writeFloat(sample.hdop_hundredths / 100.0, gpxFile, 2);
     gpxFile.print(F("</hdop>"));
   }
+  getVoltageMaybeExit();
 
   gpxFile.print(F("</trkpt>\n"));
 
   gpxFile.print(F(GPX_EPILOGUE));
 
+  getVoltageMaybeExit();
   digitalWrite(PIN_STATUS_LED, HIGH);
   if (!gpxFile.sync() || gpxFile.getWriteError()) {
     Serial.println(F("SD sync/write error."));
@@ -326,19 +320,39 @@ static void fillGpsSample(TinyGPS &gps) {
       &sample.datetime_fix_age_ms);
 }
 
-static bool recordVoltageAndReportSafe() {
+static float getVoltageMaybeExit() {
+  // TODO: Do safety calculation in int to be faster?
   float voltage =
       analogRead(PIN_BATTERY_DIVIDED_VOLTAGE) / VOLTAGE_ANALOG_CONSTANT;
-  if (voltage == 0.0) {
-    return true; // Regulated (USB) supply voltage.
+  float dv = voltage - lastVoltage;
+  // Regulated (USB) supply voltage is approximately 0 on the battery vin,
+  // otherwise abort if vin is low or falling.
+  if (voltage > 2.0
+      && (voltage < CUTOFF_VOLTAGE || dv < CUTOFF_DV)) {
+    gpxFile.close();
+    voltageFile.print(F("x"));
+    voltageFile.close();
+    digitalWrite(PIN_STATUS_LED, HIGH);
+    Serial.print(F("Exiting, final voltage was "));
+    Serial.println(voltage);
+    Serial.flush();
+    exit(0);
+    // TODO: Resume in case of a false alarm.
   }
+  lastVoltage = voltage;
+  return voltage;
+}
 
-  if (lastVoltage != voltage || lastRecordedVoltageMinute != sample.minute) {
+static bool recordVoltage() {
+  float voltage = getVoltageMaybeExit();
+  if (voltage != lastRecordedVoltage
+      || lastRecordedVoltageMinute != sample.minute) {
     writeFormattedSampleDatetime(voltageFile);
     voltageFile.print(F(","));
     writeFloat(voltage, voltageFile, 2);
     voltageFile.print(F("\n"));
     lastRecordedVoltageMinute = sample.minute;
+    lastRecordedVoltage = voltage;
 
     digitalWrite(PIN_STATUS_LED, HIGH);
     if (!voltageFile.sync() || voltageFile.getWriteError()) {
@@ -347,7 +361,4 @@ static bool recordVoltageAndReportSafe() {
     digitalWrite(PIN_STATUS_LED, LOW);
   }
 
-  float dv = voltage - lastVoltage;
-  lastVoltage = voltage;
-  return voltage > CUTOFF_VOLTAGE && dv > CUTOFF_DV;
 }
