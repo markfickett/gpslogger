@@ -17,6 +17,11 @@
  *   #define _SS_MAX_RX_BUFF 256
  * On MacOS, it's in Contents/Resources/Java/libraries/SoftwareSerial/.
  *
+ * Voltage and power-off detection is designed for an Arduino Pro Mini 3.3v
+ * powered from at least 3.8v (3x NiMH AAs), with a 680uF 12+v capacitor across
+ * the raw voltage supply, and a 560KOhm/120KOhm voltage divider to A3. The
+ * setup (with GPS and SD writing) draws around 42mA.
+ *
  * GPS getting-started guide: https://www.sparkfun.com/tutorials/176
  * NMEA explanations: http://www.gpsinformation.org/dale/nmea.htm#position
  * NMEA checksum calculator: http://www.hhhh.org/wiml/proj/nmeaxor.html
@@ -47,11 +52,17 @@
 #define GPX_EPILOGUE "\t</trkseg></trk>\n</gpx>\n"
 #define LATLON_PREC 6
 
+#define PIN_BATTERY_DIVIDED_VOLTAGE A3
+#define VOLTAGE_ANALOG_CONSTANT 53.71
+#define CUTOFF_DV -0.1
+#define CUTOFF_VOLTAGE 3.4
+
 TinyGPS gps;
 SoftwareSerial nss(PIN_RX_FROM_GPS, PIN_TX_TO_GPS);
 
 SdFat sd;
 SdFile gpxFile;
+SdFile voltageFile;
 
 // General-purpose text buffer used in formatting.
 char buf[32];
@@ -63,12 +74,18 @@ struct GpsSample {
 
   int satellites;
   int hdop_hundredths;
+
+  // How many ms, according to millis(), since the last position data was read
+  // from the GPS.
   unsigned long fix_age_ms;
 
   float speed_mps;
   float course_deg;
 
+  // How many ms, according to millis(), since the last datetime data was read
+  // from the GPS.
   unsigned long datetime_fix_age_ms;
+
   int year;
   byte month,
        day,
@@ -80,12 +97,19 @@ struct GpsSample {
 // The latest sample read from the GPS.
 struct GpsSample sample;
 
+// The previously sampled / recorded voltage.
+float lastVoltage;
+byte lastRecordedVoltageMinute;
+
 void setup() {
   pinMode(PIN_STATUS_LED, OUTPUT);
   digitalWrite(PIN_STATUS_LED, HIGH);
+  lastVoltage = 0;
+  lastRecordedVoltageMinute = 61;
   Serial.begin(115200);
   setUpSd();
-  setUpGps();
+  getFirstGpsSample();
+  startFilesOnSdNoSync();
   digitalWrite(PIN_STATUS_LED, LOW);
 }
 
@@ -93,14 +117,22 @@ void loop() {
   readFromGpsUntilSampleTime();
   fillGpsSample(gps);
   if (sample.fix_age_ms <= SAMPLE_INTERVAL_MS) {
+    // TODO: Write whenever there is new data (trust GPS is set at 1Hz).
     writeGpxSampleToSd();
   }
 
-  // TODO: Exit condition. Voltage drop from power being switched off?
-  if (false) {
+  if (!recordVoltageAndReportSafe()) {
     gpxFile.close();
-    Serial.println(F("Exiting."));
-    exit(0);
+    voltageFile.close();
+    Serial.print(F("Exiting, last voltage was "));
+    Serial.println(lastVoltage);
+    // TODO: Resume in case of a false alarm.
+    while(true) {
+      //digitalWrite(PIN_STATUS_LED, HIGH);
+      delay(50);
+      //digitalWrite(PIN_STATUS_LED, LOW);
+      delay(500);
+    }
   }
 }
 
@@ -114,7 +146,7 @@ void setUpSd() {
   }
 }
 
-void setUpGps() {
+void getFirstGpsSample() {
   nss.begin(14400);
 
   while (true) {
@@ -125,7 +157,7 @@ void setUpGps() {
     } else if (sample.fix_age_ms == TinyGPS::GPS_INVALID_AGE) {
       Serial.println(F("Waiting for datetime fix."));
     } else {
-      startGpxFileOnSdNoSync();
+      Serial.println(F("Got GPS fix."));
       break;
     }
   }
@@ -145,7 +177,8 @@ static bool readFromGpsSerial() {
   }
 }
 
-static void startGpxFileOnSdNoSync() {
+static void startFilesOnSdNoSync() {
+  // directory
   sprintf(
       buf,
       "%02d%02d%02d",
@@ -157,34 +190,61 @@ static void startGpxFileOnSdNoSync() {
       sd.errorHalt("Creating log directory for today failed.");
     }
   }
-  sprintf(
-      buf,
-      "%02d%02d%02d/%02d%02d%02d.gpx",
-      sample.year,
-      sample.month,
-      sample.day,
-      sample.hour,
-      sample.minute,
-      sample.second);
-  Serial.print(F("Starting log file "));
-  Serial.println(buf);
-  if (sd.exists(buf)) {
-    Serial.println(F("warning: log file already exists, overwriting."));
-  }
-  if (!gpxFile.open(buf, O_CREAT | O_WRITE)) {
-    sd.errorHalt("Opening new log file failed.");
-  }
 
+  // SdFat will silently die if given a filename longer than "8.3"
+  // (8 characters, a dot, and 3 file-extension characters).
+
+  // GPX log
+  openTimestampedFile(".gpx", gpxFile);
   gpxFile.print(F(
     "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
     "<gpx version=\"1.0\">\n"
     "\t<trk><trkseg>\n"));
   gpxFile.print(F(GPX_EPILOGUE));
+
+  // input (battery) voltage log
+  openTimestampedFile("v.csv", voltageFile);
+  voltageFile.print(F("datetime,voltage\n"));
+}
+
+static void openTimestampedFile(const char *shortSuffix, SdFile &file) {
+  sprintf(
+      buf,
+      "%02d%02d%02d/%02d%02d%02d%s",
+      sample.year,
+      sample.month,
+      sample.day,
+      sample.hour,
+      sample.minute,
+      sample.second,
+      shortSuffix);
+  Serial.print(F("Starting file "));
+  Serial.println(buf);
+  if (sd.exists(buf)) {
+    Serial.println(F("warning: already exists, overwriting."));
+  }
+  if (!file.open(buf, O_CREAT | O_WRITE)) {
+    sd.errorHalt();
+  }
 }
 
 static void writeFloat(float v, SdFile &file, int precision) {
   obufstream ob(buf, sizeof(buf));
   ob << setprecision(precision) << v;
+  file.print(buf);
+}
+
+static void writeFormattedSampleDatetime(SdFile &file) {
+  sprintf(
+      buf,
+      "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ",
+      sample.year,
+      sample.month,
+      sample.day,
+      sample.hour,
+      sample.minute,
+      sample.second,
+      sample.hundredths);
   file.print(buf);
 }
 
@@ -199,17 +259,7 @@ static void writeGpxSampleToSd() {
   gpxFile.print(F("\">"));
 
   gpxFile.print(F("<time>"));
-  sprintf(
-      buf,
-      "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ",
-      sample.year,
-      sample.month,
-      sample.day,
-      sample.hour,
-      sample.minute,
-      sample.second,
-      sample.hundredths);
-  gpxFile.print(buf);
+  writeFormattedSampleDatetime(gpxFile);
   gpxFile.print(F("</time>"));
 
   if (sample.altitude_m != TinyGPS::GPS_INVALID_F_ALTITUDE) {
@@ -239,9 +289,6 @@ static void writeGpxSampleToSd() {
     writeFloat(sample.hdop_hundredths / 100.0, gpxFile, 2);
     gpxFile.print(F("</hdop>"));
   }
-  gpxFile.print(F("<ageofdgpsdata>"));
-  writeFloat(sample.fix_age_ms / 1000.0, gpxFile, 3);
-  gpxFile.print(F("</ageofdgpsdata>"));
 
   gpxFile.print(F("</trkpt>\n"));
 
@@ -276,4 +323,30 @@ static void fillGpsSample(TinyGPS &gps) {
       &sample.second,
       &sample.hundredths,
       &sample.datetime_fix_age_ms);
+}
+
+static bool recordVoltageAndReportSafe() {
+  float voltage =
+      analogRead(PIN_BATTERY_DIVIDED_VOLTAGE) / VOLTAGE_ANALOG_CONSTANT;
+  if (voltage == 0.0) {
+    return true; // Regulated (USB) supply voltage.
+  }
+
+  if (lastVoltage != voltage || lastRecordedVoltageMinute != sample.minute) {
+    writeFormattedSampleDatetime(voltageFile);
+    voltageFile.print(F(","));
+    writeFloat(voltage, voltageFile, 2);
+    voltageFile.print(F("\n"));
+    lastRecordedVoltageMinute = sample.minute;
+
+    digitalWrite(PIN_STATUS_LED, HIGH);
+    if (!voltageFile.sync() || voltageFile.getWriteError()) {
+      Serial.println(F("SD sync/write error."));
+    }
+    digitalWrite(PIN_STATUS_LED, LOW);
+  }
+
+  float dv = voltage - lastVoltage;
+  lastVoltage = voltage;
+  return voltage > CUTOFF_VOLTAGE && dv > CUTOFF_DV;
 }
