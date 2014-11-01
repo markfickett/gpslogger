@@ -123,6 +123,7 @@ void loop() {
 
   if (!recordVoltageAndReportSafe()) {
     gpxFile.close();
+    voltageFile.print(F("detected power-off"));
     voltageFile.close();
     Serial.print(F("Exiting, last voltage was "));
     Serial.println(lastVoltage);
