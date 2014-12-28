@@ -47,6 +47,9 @@
 // 12 MISO (master input, slave output)
 // 13 CLK (clock)
 
+#define DEFAULT_GPS_BAUD 57600
+#define GPS_BAUD 14400
+
 // Seek to fileSize + this position before writing track points.
 #define SEEK_TRKPT_BACKWARDS -24
 #define GPX_EPILOGUE "\t</trkseg></trk>\n</gpx>\n"
@@ -110,6 +113,7 @@ void setup() {
   lastRecordedVoltageMinute = 61;
   Serial.begin(115200);
   setUpSd();
+  resetGpsConfig();
   getFirstGpsSample();
   startFilesOnSdNoSync();
   digitalWrite(PIN_STATUS_LED, LOW);
@@ -135,8 +139,26 @@ void setUpSd() {
   }
 }
 
+/**
+ * Redoes GPS configuration, assuming it has factory-default settings.
+ *
+ * Although this should only have to be done once, the GPS module sometimes
+ * drops these customizations (possibly due to power brown-out).
+ */
+void resetGpsConfig() {
+  digitalWrite(PIN_STATUS_LED, HIGH);
+  nss.begin(DEFAULT_GPS_BAUD);
+  nss.println("$PMTK314,0,5,0,5,0,0,0,0,0,0,0,0,0,0,0,0,0*28");
+  nss.println("$PMTK251,14400*29");
+  nss.flush();
+  nss.end();
+  digitalWrite(PIN_STATUS_LED, LOW);
+
+  nss.begin(GPS_BAUD);
+}
+
 void getFirstGpsSample() {
-  nss.begin(14400);
+  nss.begin(GPS_BAUD);
 
   while (true) {
     readFromGpsUntilSampleTime();
