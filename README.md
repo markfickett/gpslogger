@@ -8,28 +8,29 @@ This uses TinyGPS to decode NMEA (RMS and GGA) sentences from a [LS20031 GPS mod
 This is a functional logger, and a good lesson about GPS modules, NMEA, and SD/FAT from Arduino. It is probably not the most efficient GPS logger (see "improvements").
 
 ![assembled logger](https://farm8.staticflickr.com/7580/16198442305_999b0dc2b0_z.jpg)
-[photos on flickr](https://www.flickr.com/photos/markfickett/sets/72157650108735212)
+
+[more photos on flickr](https://www.flickr.com/photos/markfickett/sets/72157650108735212)
 
 Setup
 -----
 
 Recommended configuration for the LS20031 GPS module:
 
-  // FULL COLD RESTART (clears any bad almanac data)
-  Serial.println("$PMTK104*37");
-  // GGA + RMC (all that is used by TinyGPS), 1Hz
-  Serial.println("$PMTK314,0,5,0,5,0,0,0,0,0,0,0,0,0,0,0,0,0*28");
-  // Reduce serial output rate 57600 => 14400 baud, since SoftwareSerial
-  // on an 8MHz Arduino Pro Mini can't keep up (though an Uno can).
-  Serial.println("$PMTK251,14400*29");
+    // FULL COLD RESTART (clears any bad almanac data)
+    Serial.println("$PMTK104*37");
+    // GGA + RMC (all that is used by TinyGPS), 1Hz
+    Serial.println("$PMTK314,0,5,0,5,0,0,0,0,0,0,0,0,0,0,0,0,0*28");
+    // Reduce serial output rate 57600 => 14400 baud, since SoftwareSerial
+    // on an 8MHz Arduino Pro Mini can't keep up (though an Uno can).
+    Serial.println("$PMTK251,14400*29");
 
 Since the module sometimes loses its configuration, the Arduino startup code always sends the latter two configuration commands.
 
 Also edit SoftwareSerial.h to have a larger buffer (default is 64):
 
-  #define _SS_MAX_RX_BUFF 256
+    #define _SS_MAX_RX_BUFF 256
 
-On MacOS, it's in Contents/Resources/Java/libraries/SoftwareSerial/.
+On MacOS, it's in Arduino.app in Contents/Resources/Java/libraries/SoftwareSerial/.
 
 Voltage Detection
 -----------------
