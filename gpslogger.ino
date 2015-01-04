@@ -1,33 +1,5 @@
 /**
- * Fetch GPS data over serial and log it to an SD card.
- *
- * This uses TinyGPS to decode NMEA (RMS and GGA) sentences from a LS20031 GPS
- * module, and then uses the the SD library to write GPX formatted data to a
- * micro SD card.
- *
- * Recommended configuration for the LS20031 GPS module:
- *   // FULL COLD RESTART (clears any bad almanac data)
- *   Serial.println("$PMTK104*37");
- *   // GGA + RMC (all that is used by TinyGPS), 1Hz
- *   Serial.println("$PMTK314,0,5,0,5,0,0,0,0,0,0,0,0,0,0,0,0,0*28");
- *   // Reduce serial output rate 57600 => 14400 baud, since SoftwareSerial
- *   // on an 8MHz Arduino Pro Mini can't keep up (though an Uno can).
- *   Serial.println("$PMTK251,14400*29");
- * Also edit SoftwareSerial.h to have a larger buffer (default is 64):
- *   #define _SS_MAX_RX_BUFF 256
- * On MacOS, it's in Contents/Resources/Java/libraries/SoftwareSerial/.
- *
- * Voltage and power-off detection is designed for an Arduino Pro Mini 3.3v
- * powered from at least 3.8v (3x NiMH AAs), with a 680uF 12+v capacitor across
- * the raw voltage supply, and a 560KOhm/120KOhm voltage divider to A3. The
- * setup (with GPS and SD writing) draws around 42mA.
- *
- * GPS getting-started guide: https://www.sparkfun.com/tutorials/176
- * NMEA explanations: http://www.gpsinformation.org/dale/nmea.htm#position
- * NMEA checksum calculator: http://www.hhhh.org/wiml/proj/nmeaxor.html
- * GPX tags http://wiki.openstreetmap.org/wiki/GPX
- *          http://www.topografix.com/gpx_manual.asp
- * Similar project http://forum.arduino.cc/index.php?topic=199019.15
+ * Fetch GPS data over serial and log it to an SD card. See README for more.
  */
 
 #include <SoftwareSerial.h>
